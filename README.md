@@ -6,6 +6,8 @@ Run your windows executable as such
   
 `./protonlauncher [command]`  
   
+This will run anything with the latest version of Proton the launcher can find and create a default sandbox for all applications run with this to run in
+  
 If you want to run an application along side something launched normally with steam, you can specify the appID of what you launched.  
   
 `./protonlauncher -i [appID] [command]`  
