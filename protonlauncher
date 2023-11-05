@@ -1,0 +1,194 @@
+#!/bin/bash
+
+#running the command (protonlauncher ([-v <Proton Version>] [-i <Compat App ID>]) [command])
+
+proton_ver=
+appID=
+cmd=
+args=
+
+if [ -z "$1" ]
+then
+    echo "Usage: protonlauncher ([-v <Proton Version>] [-i <Compat App ID>]) [command]"
+    exit 1
+fi
+
+while getopts v:i: arg;
+do
+    case "${arg}" in
+        v)
+            proton_ver=${OPTARG}
+            echo "$proton_ver"
+            ;;
+        i)
+            appID=${OPTARG}
+            echo "$appID"
+            ;;
+    esac
+done
+
+cmd="${@: -1}"
+
+#check if the executable to run exists
+#this is probably a bad way of doing it but this is a way without touching regex
+#probably add more executable types like msi
+
+exe=`echo "$cmd" | awk -F'.bat|.exe' '{print $1}'`
+if ! [ -f "$exe".exe ] && ! [ -f "$exe".bat ]
+then
+    echo "Could not find \"$exe\" - File does not exists!"
+    exit 1
+fi
+
+#find where proton is
+
+#steam does this weird thing where it will place SteamLibrary folders only 
+#in the root directory of a physical partition
+
+#df prints all drives + mount points and grep filters it, and sed removes everything we dont want
+#this could probably be improved
+paths=`df | grep -i ^/dev/ | sed -n -e 's/^.*% //p'`
+
+steam_libray_paths=
+
+#find all SteamLibrary folders that exist
+
+for pth in $paths
+do
+    [ -d "$pth"/SteamLibrary ] && steam_library_paths="$steam_library_paths""$pth"/SteamLibrary";"
+done
+
+steam_path=
+
+[ -d "$HOME"/var/app/com.valvesoftware.Steam/data/Steam ] && steam_path="$HOME"/var/app/com.valvesoftware.Steam/data/Steam
+[ -d "$HOME"/.steam/steam ] && steam_path="$HOME"/.steam/steam
+
+if [ -z "$steam_path" ]
+then
+    echo "Could not find steam!"
+    exit 1
+fi
+
+steam_library_paths="$steam_library_paths""$steam_path"";"
+
+#find all possible proton paths
+#maybe check for duplicate installs at some point
+
+proton_paths=
+last_IFS="$IFS"
+export IFS=";"
+for pth in $steam_library_paths
+do
+    for proton_dir in "$pth"/steamapps/common/Proton\ *
+    do
+        proton_paths="$proton_paths""$proton_dir"";"
+    done
+done
+
+if [ -z "$proton_paths" ]
+then
+    echo "Could not find Proton!"
+    exit 1
+fi
+
+#find the highest version if version is not specified
+
+PROTON_PATH=
+
+if [ -z "$proton_ver" ]
+then
+    highest_proton_ver=-1.0
+    for pth in $proton_paths
+    do
+        cur_ver=`echo "$pth" | awk '{printf "%s", $NF}'`
+        if [ "$cur_ver" = Experimental ]
+        then
+            highest_proton_ver=Experimental
+            PROTON_PATH="$pth"
+            break
+        elif [ -z pth ]
+        then
+            echo "Could not find Proton Version! - File path empty"
+            exit 1
+        else
+            major=`echo "$cur_ver" | awk -F'.' '{printf "%s", $1}'`
+            minor=`echo "$cur_ver" | awk -F'.' '{printf "%s", $NF}'`
+            high_major=`echo "$highest_proton_ver" | awk -F'.' '{printf "%s", $1}'`
+            high_minor=`echo "$highest_proton_ver" | awk -F'.' '{printf "%s", $NF}'`
+            if (( "$major" > "$high_major" ))
+            then
+                highest_proton_ver="$cur_ver"
+                PROTON_PATH="$pth"
+            elif (( "$major" == "$high_major" ))
+            then
+                if (( "$minor" > "$high_minor" ))
+                then
+                    highest_proton_ver="$cur_ver"
+                    PROTON_PATH="$pth"
+                fi
+            fi
+        fi
+    done
+    if [ -z "$PROTON_PATH" ]
+    then
+        echo "Could not find Proton version! - Could not find a Proton install!"
+        exit 1
+    fi
+    proton_ver="$highest_proton_ver"
+else
+    for pth in $proton_paths
+    do
+        cur_ver=`echo "$pth" | awk '{printf "%s", $NF}'`
+        if [ "$proton_ver" = "$cur_ver" ]
+        then
+            PROTON_PATH="$pth"
+            break
+        fi
+    done
+    if [ -z "$PROTON_PATH" ]
+    then
+        echo "Could Not Find Proton Version! - Could not find specified version"
+        exit 1
+    fi
+fi
+
+compat_path=
+
+#find the compat path
+
+#check if compat folder exists for the app ID
+if ! [ -z "$appID"  ]
+then
+    for pth in $steam_library_paths
+    do
+        for pth2 in "$pth"/steamapps/compatdata/*
+        do
+            
+            if [ `echo "$pth2" | awk -F'/' '{printf "%s", $NF}'` = "$appID" ]
+            then
+                compat_path="$pth2"
+                break 2
+            fi
+        done
+    done
+    if [ -z "$compat_path" ]
+    then
+        echo "Could not find App ID's compat path!"
+        exit 1
+    fi
+else
+    compat_path="$steam_path"/steamapps/compatdata/default
+    if ! [ -d "$compat_path" ]
+    then
+        mkdir "$compat_path"
+    fi
+fi
+
+export IFS="$last_IFS"
+
+export STEAM_COMPAT_DATA_PATH="$compat_path"
+export STEAM_COMPAT_CLIENT_INSTALL_PATH="$steam_path"
+
+#run the command in proton
+
+"$PROTON_PATH"/proton run "$cmd"
